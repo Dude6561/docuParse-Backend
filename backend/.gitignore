@@ -1,0 +1,11 @@
+node_modules/
+dist/
+src/uploads/*.png
+src/uploads/*.jpg
+src/uploads/*.jpeg
+src/uploads/*.pdf
+src/uploads/*.tiff
+src/uploads/*.webp
+src/uploads/exports/*.xlsx
+src/uploads/exports/*.csv
+.env

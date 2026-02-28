@@ -6,7 +6,7 @@ export const api = axios.create({
   baseURL: API_BASE,
   timeout: 120000,
 });
-
+//edit
 export interface JobStatus {
   id: string;
   status: "pending" | "processing" | "completed" | "failed";

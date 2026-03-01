@@ -16,9 +16,9 @@ import {
 export const metadata: Metadata = {
   title: "Pricing - DocuParse Nepal | OCR Document Processing",
   description:
-    "Affordable OCR pricing for Nepal. Convert bank statements to Excel 10x cheaper than manual data entry. Plans starting from NPR 999/month. Khalti payment supported.",
+    "Affordable OCR pricing for Nepal. Convert bank statements to Excel 10x cheaper than manual data entry. Plans starting from NPR 999/month.",
   keywords:
-    "OCR pricing Nepal, bank statement digitization cost, data entry Nepal, document processing pricing, Khalti payment",
+    "OCR pricing Nepal, bank statement digitization cost, data entry Nepal, document processing pricing",
 };
 
 const plans = [
@@ -216,14 +216,12 @@ export default function PricingPage() {
             ))}
           </div>
 
-          {/* Payment note */}
+          {/* Plan note */}
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4 text-sm text-neutral-400">
             <span className="flex items-center gap-1.5">
               <Shield className="h-4 w-4" />
-              Secure payments via Khalti
+              Billing dashboard in-app
             </span>
-            <span>•</span>
-            <span>eSewa support coming soon</span>
             <span>•</span>
             <span>Cancel anytime</span>
             <span>•</span>

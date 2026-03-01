@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FileText, Menu, X, LogIn, User } from "lucide-react";
@@ -59,10 +60,12 @@ export function Navbar() {
                 className="flex items-center gap-2 rounded-full border border-[var(--color-border)] px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:border-neutral-400 hover:text-black"
               >
                 {session.user.image ? (
-                  <img
+                  <Image
                     src={session.user.image}
-                    alt=""
-                    className="h-5 w-5 rounded-full"
+                    alt={session.user.name ?? "User"}
+                    width={20}
+                    height={20}
+                    className="rounded-full"
                   />
                 ) : (
                   <User className="h-4 w-4" />
@@ -134,10 +137,12 @@ export function Navbar() {
                 <>
                   <div className="mb-3 flex items-center gap-2">
                     {session.user.image ? (
-                      <img
+                      <Image
                         src={session.user.image}
-                        alt=""
-                        className="h-6 w-6 rounded-full"
+                        alt={session.user.name ?? "User"}
+                        width={24}
+                        height={24}
+                        className="rounded-full"
                       />
                     ) : (
                       <User className="h-4 w-4" />

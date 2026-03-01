@@ -4,17 +4,32 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api";
 
 export const api = axios.create({
   baseURL: API_BASE,
-  timeout: 120000,
+  timeout: 120_000,
+  withCredentials: true,
 });
-//edit
+
+// Attach session token when available (for server-side auth)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // Normalize network errors to a friendlier message
+    if (error.code === "ERR_NETWORK" || error.code === "ECONNREFUSED") {
+      error.message =
+        "Cannot reach the backend server. Make sure it is running on " +
+        API_BASE;
+    }
+    return Promise.reject(error);
+  },
+);
+
 export interface JobStatus {
   id: string;
   status: "pending" | "processing" | "completed" | "failed";
   originalName: string;
   documentType: string;
   uploadedAt: string;
-  completedAt?: string;
-  error?: string;
+  completedAt?: string | null;
+  error?: string | null;
   data?: {
     rawText: string;
     structured: Transaction[];
@@ -28,6 +43,7 @@ export interface Transaction {
   debit: number | null;
   credit: number | null;
   balance: number | null;
+  confidence?: number;
 }
 
 export interface DocumentSummary {
@@ -38,6 +54,9 @@ export interface DocumentSummary {
   totalCredit: number;
   transactionCount: number;
   currency: string;
+  confidenceScore: number;
+  signaturesDetected: number;
+  tablesDetected: number;
 }
 
 export interface HistoryJob {
@@ -79,5 +98,7 @@ export const getHistory = async (): Promise<{
   return response.data;
 };
 
-export const getDownloadUrl = (jobId: string): string =>
-  `${API_BASE}/ocr/download/${jobId}`;
+export const getDownloadUrl = (
+  jobId: string,
+  format: "xlsx" | "csv" = "xlsx",
+): string => `${API_BASE}/ocr/download/${jobId}?format=${format}`;

@@ -191,7 +191,7 @@ export default function HomePage() {
             <FeatureCard
               icon={<Zap className="h-5 w-5" />}
               title="Fast OCR Engine"
-              description="Powered by Tesseract.js with support for English and Nepali text recognition."
+              description="Powered by AWS Textract for high-accuracy extraction of tables, forms, and signatures."
             />
             <FeatureCard
               icon={<Table2 className="h-5 w-5" />}
@@ -206,7 +206,7 @@ export default function HomePage() {
             <FeatureCard
               icon={<Shield className="h-5 w-5" />}
               title="Secure Processing"
-              description="Documents are processed locally and deleted after export. Your data never leaves the server."
+              description="Documents are encrypted in transit and processed securely with audit-ready job tracking."
             />
             <FeatureCard
               icon={<FileSpreadsheet className="h-5 w-5" />}

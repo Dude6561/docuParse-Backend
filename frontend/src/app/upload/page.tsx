@@ -92,10 +92,14 @@ export default function UploadPage() {
       } else {
         setError(result.message || "Upload failed");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errorObject = err as {
+        response?: { data?: { message?: string } };
+        message?: string;
+      };
       setError(
-        err.response?.data?.message ||
-          err.message ||
+        errorObject.response?.data?.message ||
+          errorObject.message ||
           "Upload failed. Please try again.",
       );
     } finally {

@@ -153,13 +153,22 @@ function ResultsContent() {
           </div>
 
           {isCompleted && (
-            <a
-              href={getDownloadUrl(jobId)}
-              className="inline-flex items-center gap-2 rounded-full bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 transition-colors"
-            >
-              <Download className="h-4 w-4" />
-              Download Excel
-            </a>
+            <div className="flex items-center gap-2">
+              <a
+                href={getDownloadUrl(jobId, "xlsx")}
+                className="inline-flex items-center gap-2 rounded-full bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 transition-colors"
+              >
+                <Download className="h-4 w-4" />
+                Download Excel
+              </a>
+              <a
+                href={getDownloadUrl(jobId, "csv")}
+                className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 transition-colors"
+              >
+                <Download className="h-4 w-4" />
+                Download CSV
+              </a>
+            </div>
           )}
 
           {isProcessing && (
@@ -210,7 +219,7 @@ function ResultsContent() {
         {isCompleted && job.data && (
           <div className="space-y-6">
             {/* Summary Cards */}
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
               <SummaryCard
                 icon={<Building2 className="h-5 w-5" />}
                 label="Bank"
@@ -234,6 +243,21 @@ function ResultsContent() {
                     ? new Date(job.completedAt).toLocaleTimeString()
                     : "—"
                 }
+              />
+              <SummaryCard
+                icon={<FileText className="h-5 w-5" />}
+                label="Confidence"
+                value={`${job.data.summary.confidenceScore.toFixed(1)}%`}
+              />
+              <SummaryCard
+                icon={<FileText className="h-5 w-5" />}
+                label="Tables"
+                value={job.data.summary.tablesDetected.toString()}
+              />
+              <SummaryCard
+                icon={<FileText className="h-5 w-5" />}
+                label="Signatures"
+                value={job.data.summary.signaturesDetected.toString()}
               />
             </div>
 

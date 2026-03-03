@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DocumentType {
+  bank_statement
+  invoice
+  receipt
+  tax_document
+  citizenship
+  other
+}
+
+enum JobStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+model AppUser {
+  id             String   @id @default(uuid()) @db.Uuid
+  externalAuthId String?  @unique @map("external_auth_id")
+  email          String?  @unique
+  fullName       String?  @map("full_name")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  documents   Document[]           @relation("DocumentsUploadedBy")
+  memberships OrganizationMember[]
+
+  @@map("app_users")
+}
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String?  @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  documents Document[]
+  members   OrganizationMember[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  role           String   @default("member")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         AppUser      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@map("organization_members")
+}
+
+model Document {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String?      @map("organization_id") @db.Uuid
+  uploadedBy     String?      @map("uploaded_by") @db.Uuid
+  documentType   DocumentType @default(other) @map("document_type")
+  originalName   String       @map("original_name")
+  mimeType       String       @map("mime_type")
+  sizeBytes      BigInt       @map("size_bytes")
+  storagePath    String?      @map("storage_path")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization?   @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  uploader     AppUser?        @relation("DocumentsUploadedBy", fields: [uploadedBy], references: [id], onDelete: SetNull)
+  jobs         ProcessingJob[]
+
+  @@index([createdAt(sort: Desc)], map: "idx_documents_created_at")
+  @@index([uploadedBy], map: "idx_documents_uploaded_by")
+  @@map("documents")
+}
+
+model ProcessingJob {
+  id              String    @id @default(uuid()) @db.Uuid
+  documentId      String    @map("document_id") @db.Uuid
+  status          JobStatus @default(pending)
+  errorMessage    String?   @map("error_message")
+  rawText         String?   @map("raw_text")
+  summary         Json?
+  metrics         Json?
+  textractPayload Json?     @map("textract_payload")
+  startedAt       DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  document     Document               @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  transactions ExtractedTransaction[]
+  signatures   ExtractedSignature[]
+
+  @@index([documentId], map: "idx_jobs_document")
+  @@index([status, createdAt(sort: Desc)], map: "idx_jobs_status_created")
+  @@map("processing_jobs")
+}
+
+model ExtractedTransaction {
+  id          String   @id @default(uuid()) @db.Uuid
+  jobId       String   @map("job_id") @db.Uuid
+  rowIndex    Int      @map("row_index")
+  txDate      String?  @map("tx_date")
+  description String?
+  debit       Decimal? @db.Decimal(18, 2)
+  credit      Decimal? @db.Decimal(18, 2)
+  balance     Decimal? @db.Decimal(18, 2)
+  confidence  Decimal? @db.Decimal(5, 2)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  job ProcessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, rowIndex], map: "idx_tx_job_row")
+  @@map("extracted_transactions")
+}
+
+model ExtractedSignature {
+  id         String   @id @default(uuid()) @db.Uuid
+  jobId      String   @map("job_id") @db.Uuid
+  page       Int?
+  confidence Decimal? @db.Decimal(5, 2)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  job ProcessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@map("extracted_signatures")
+}

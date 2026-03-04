@@ -30,7 +30,7 @@ const uploadSchema = z.object({
 });
 
 ocrRouter.post(
-  "/process",
+  "/processs",
   upload.single("document"),
   async (req, res, next) => {
     try {

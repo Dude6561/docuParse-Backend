@@ -61,6 +61,25 @@ export default function DashboardPage() {
     (sum, j) => sum + (j.transactionCount || 0),
     0,
   );
+  const averageConfidence =
+    completedJobs.length > 0
+      ? completedJobs.reduce((sum, j) => sum + (j.confidenceScore ?? 0), 0) /
+        completedJobs.length
+      : 0;
+  const balancePassRate =
+    completedJobs.length > 0
+      ? (completedJobs.filter((j) => j.balanceCheckPassed).length /
+          completedJobs.length) *
+        100
+      : 0;
+  const totalDuplicates = completedJobs.reduce(
+    (sum, j) => sum + (j.duplicateCount ?? 0),
+    0,
+  );
+  const totalLowConfidence = completedJobs.reduce(
+    (sum, j) => sum + (j.lowConfidenceCount ?? 0),
+    0,
+  );
   const pagesUsed = jobs.length;
   const pagesLimit = 50; // Free tier
 
@@ -255,6 +274,47 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
+            <p className="text-sm font-medium text-neutral-500">
+              Avg OCR Confidence
+            </p>
+            <p className="mt-2 text-2xl font-bold text-indigo-600">
+              {averageConfidence.toFixed(1)}%
+            </p>
+            <p className="mt-1 text-xs text-neutral-400">parser quality KPI</p>
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
+            <p className="text-sm font-medium text-neutral-500">
+              Balance Pass Rate
+            </p>
+            <p className="mt-2 text-2xl font-bold text-emerald-600">
+              {balancePassRate.toFixed(0)}%
+            </p>
+            <p className="mt-1 text-xs text-neutral-400">
+              statement-level check
+            </p>
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
+            <p className="text-sm font-medium text-neutral-500">
+              Duplicates Flagged
+            </p>
+            <p className="mt-2 text-2xl font-bold text-amber-600">
+              {totalDuplicates}
+            </p>
+            <p className="mt-1 text-xs text-neutral-400">review exceptions</p>
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-white p-5">
+            <p className="text-sm font-medium text-neutral-500">
+              Low Confidence Rows
+            </p>
+            <p className="mt-2 text-2xl font-bold text-orange-600">
+              {totalLowConfidence}
+            </p>
+            <p className="mt-1 text-xs text-neutral-400">needs manual review</p>
+          </div>
+        </div>
+
         {/* Filter Tabs */}
         <div className="mb-6 flex items-center gap-2 border-b border-[var(--color-border)]">
           {(
@@ -372,6 +432,11 @@ export default function DashboardPage() {
                         </span>
                         {job.transactionCount > 0 && (
                           <span>{job.transactionCount} transactions</span>
+                        )}
+                        {job.failureReason && (
+                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-600">
+                            {job.failureReason}
+                          </span>
                         )}
                       </div>
                     </div>

@@ -11,7 +11,7 @@ import {
   AlertCircle,
   FileText,
 } from "lucide-react";
-import { uploadDocument } from "@/lib/api";
+import { uploadDocument, uploadDocumentsBatch } from "@/lib/api";
 
 const documentTypes = [
   { value: "bank_statement", label: "Bank Statement", icon: "🏦" },
@@ -23,7 +23,7 @@ const documentTypes = [
 
 export default function UploadPage() {
   const router = useRouter();
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [documentType, setDocumentType] = useState("bank_statement");
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -46,19 +46,19 @@ export default function UploadPage() {
     setError(null);
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const droppedFile = e.dataTransfer.files[0];
-      validateAndSetFile(droppedFile);
+      const droppedFiles = Array.from(e.dataTransfer.files);
+      validateAndSetFiles(droppedFiles);
     }
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setError(null);
-    if (e.target.files && e.target.files[0]) {
-      validateAndSetFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      validateAndSetFiles(Array.from(e.target.files));
     }
   };
 
-  const validateAndSetFile = (f: File) => {
+  const validateAndSetFiles = (incomingFiles: File[]) => {
     const allowedTypes = [
       "image/jpeg",
       "image/png",
@@ -66,31 +66,48 @@ export default function UploadPage() {
       "image/tiff",
       "application/pdf",
     ];
-    if (!allowedTypes.includes(f.type)) {
-      setError(
-        "Unsupported file type. Please upload JPEG, PNG, WebP, TIFF, or PDF.",
-      );
-      return;
+
+    const validFiles: File[] = [];
+    for (const f of incomingFiles) {
+      if (!allowedTypes.includes(f.type)) {
+        setError(
+          "Unsupported file type. Please upload JPEG, PNG, WebP, TIFF, or PDF.",
+        );
+        continue;
+      }
+      if (f.size > 10 * 1024 * 1024) {
+        setError(`File too large: ${f.name}. Maximum size is 10MB.`);
+        continue;
+      }
+      validFiles.push(f);
     }
-    if (f.size > 10 * 1024 * 1024) {
-      setError("File too large. Maximum size is 10MB.");
-      return;
+
+    if (validFiles.length > 0) {
+      setFiles(validFiles);
     }
-    setFile(f);
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
 
     setUploading(true);
     setError(null);
 
     try {
-      const result = await uploadDocument(file, documentType);
-      if (result.success && result.jobId) {
-        router.push(`/results?jobId=${result.jobId}`);
-      } else {
+      if (files.length === 1) {
+        const result = await uploadDocument(files[0]!, documentType);
+        if (result.success && result.jobId) {
+          router.push(`/results?jobId=${result.jobId}`);
+          return;
+        }
         setError(result.message || "Upload failed");
+      } else {
+        const batchResult = await uploadDocumentsBatch(files, documentType);
+        if (batchResult.success && batchResult.jobs.length > 0) {
+          router.push(`/results?jobId=${batchResult.jobs[0]!.jobId}`);
+          return;
+        }
+        setError(batchResult.message || "Batch upload failed");
       }
     } catch (err: unknown) {
       const errorObject = err as {
@@ -157,12 +174,12 @@ export default function UploadPage() {
           className={`relative rounded-xl border-2 border-dashed p-12 text-center transition-all ${
             dragActive
               ? "border-emerald-500 bg-emerald-50"
-              : file
+              : files.length > 0
                 ? "border-emerald-300 bg-emerald-50/50"
                 : "border-neutral-200 bg-neutral-50 hover:border-neutral-300"
           } ${uploading ? "animate-pulse-border" : ""}`}
         >
-          {!file ? (
+          {files.length === 0 ? (
             <div>
               <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-neutral-100">
                 <Upload className="h-6 w-6 text-neutral-400" />
@@ -176,32 +193,43 @@ export default function UploadPage() {
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/tiff,application/pdf"
+                multiple
                 onChange={handleFileChange}
                 className="absolute inset-0 cursor-pointer opacity-0"
               />
             </div>
           ) : (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-100">
-                  <FileImage className="h-6 w-6 text-emerald-600" />
+            <div className="space-y-3 text-left">
+              {files.map((file) => (
+                <div
+                  key={file.name + file.size}
+                  className="flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-100">
+                      <FileImage className="h-6 w-6 text-emerald-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">{file.name}</p>
+                      <p className="text-xs text-neutral-400">
+                        {formatFileSize(file.size)}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <p className="text-sm font-medium">{file.name}</p>
-                  <p className="text-xs text-neutral-400">
-                    {formatFileSize(file.size)}
-                  </p>
-                </div>
+              ))}
+              <div className="flex items-center justify-between border-t border-neutral-200 pt-2 text-xs text-neutral-500">
+                <span>{files.length} file(s) selected</span>
+                <button
+                  onClick={() => {
+                    setFiles([]);
+                    setError(null);
+                  }}
+                  className="rounded-full p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+                >
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-              <button
-                onClick={() => {
-                  setFile(null);
-                  setError(null);
-                }}
-                className="rounded-full p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
             </div>
           )}
         </div>
@@ -217,9 +245,9 @@ export default function UploadPage() {
         {/* Upload Button */}
         <button
           onClick={handleUpload}
-          disabled={!file || uploading}
+          disabled={files.length === 0 || uploading}
           className={`mt-6 flex w-full items-center justify-center gap-2 rounded-full py-3 text-sm font-medium transition-all ${
-            file && !uploading
+            files.length > 0 && !uploading
               ? "bg-black text-white hover:bg-neutral-800"
               : "cursor-not-allowed bg-neutral-100 text-neutral-400"
           }`}
@@ -227,12 +255,12 @@ export default function UploadPage() {
           {uploading ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Uploading & Processing...
+              Uploading & Processing {files.length} file(s)...
             </>
           ) : (
             <>
               <CheckCircle2 className="h-4 w-4" />
-              Process Document
+              {files.length > 1 ? "Process Batch" : "Process Document"}
             </>
           )}
         </button>

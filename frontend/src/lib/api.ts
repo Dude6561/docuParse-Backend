@@ -34,16 +34,32 @@ export interface JobStatus {
     rawText: string;
     structured: Transaction[];
     summary: DocumentSummary;
+    review: {
+      duplicateCount: number;
+      lowConfidenceCount: number;
+    };
+    auditLog: AuditLogEntry[];
   };
 }
 
 export interface Transaction {
+  rowIndex?: number;
   date: string;
   description: string;
+  chequeRef?: string | null;
   debit: number | null;
   credit: number | null;
   balance: number | null;
   confidence?: number;
+  lowConfidence?: boolean;
+  duplicate?: boolean;
+}
+
+export interface AuditLogEntry {
+  action: "uploaded" | "processed" | "edited";
+  at: string;
+  by: string | null;
+  note?: string;
 }
 
 export interface DocumentSummary {
@@ -57,6 +73,12 @@ export interface DocumentSummary {
   confidenceScore: number;
   signaturesDetected: number;
   tablesDetected: number;
+  openingBalance?: number | null;
+  closingBalance?: number | null;
+  calculatedClosingBalance?: number | null;
+  balanceDifference?: number | null;
+  balanceCheckPassed?: boolean;
+  parserProfile?: string;
 }
 
 export interface HistoryJob {
@@ -65,8 +87,13 @@ export interface HistoryJob {
   status: string;
   documentType: string;
   uploadedAt: string;
-  completedAt?: string;
+  completedAt?: string | null;
   transactionCount: number;
+  confidenceScore?: number;
+  balanceCheckPassed?: boolean;
+  duplicateCount?: number;
+  lowConfidenceCount?: number;
+  failureReason?: string | null;
 }
 
 export const uploadDocument = async (
@@ -80,6 +107,25 @@ export const uploadDocument = async (
   const response = await api.post("/ocr/process", formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
+  return response.data;
+};
+
+export const uploadDocumentsBatch = async (
+  files: File[],
+  documentType: string,
+): Promise<{
+  success: boolean;
+  jobs: Array<{ jobId: string; fileName: string }>;
+  message: string;
+}> => {
+  const formData = new FormData();
+  files.forEach((file) => formData.append("documents", file));
+  formData.append("documentType", documentType);
+
+  const response = await api.post("/ocr/process-batch", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+
   return response.data;
 };
 
@@ -102,3 +148,21 @@ export const getDownloadUrl = (
   jobId: string,
   format: "xlsx" | "csv" = "xlsx",
 ): string => `${API_BASE}/ocr/download/${jobId}?format=${format}`;
+
+export const getDocumentPreviewUrl = (jobId: string): string =>
+  `${API_BASE}/ocr/document/${jobId}`;
+
+export const updateReviewedRows = async (
+  jobId: string,
+  rows: Array<{
+    rowIndex: number;
+    date?: string;
+    description?: string;
+    debit?: number | null;
+    credit?: number | null;
+    balance?: number | null;
+  }>,
+): Promise<{ success: boolean; job: JobStatus }> => {
+  const response = await api.put(`/ocr/review/${jobId}`, { rows });
+  return response.data;
+};

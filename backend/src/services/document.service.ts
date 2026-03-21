@@ -4,12 +4,16 @@ import { prisma } from "../db/prisma.js";
 import { analyzeWithTextract } from "./textract.service.js";
 import {
   buildSummary,
+  extractChequeReference,
   parseTransactionsFromTextract,
 } from "./parser.service.js";
 import { uploadDocumentToStorage } from "./storage.service.js";
 import { logger } from "../config/logger.js";
 import type { JobView } from "../types/index.js";
 import type { DocumentSummary } from "../types/index.js";
+import type { AuditLogEntry, TransactionRow } from "../types/index.js";
+import type { HistoryJobView } from "../types/index.js";
+import { AppError } from "../types/index.js";
 
 function toDocumentType(value: string): DocumentType {
   const map: Record<string, DocumentType> = {
@@ -30,6 +34,115 @@ function toNullableNumber(value: Prisma.Decimal | null): number | null {
 
 function toOptionalNumber(value: Prisma.Decimal | null): number | undefined {
   return value ? Number(value.toString()) : undefined;
+}
+
+function computeDuplicateKeys(rows: TransactionRow[]) {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const key = [
+      row.date,
+      row.description.trim().toLowerCase(),
+      row.debit ?? "",
+      row.credit ?? "",
+      row.balance ?? "",
+    ].join("|");
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return new Set(
+    Array.from(counts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([key]) => key),
+  );
+}
+
+function withDuplicateFlags(rows: TransactionRow[]) {
+  const duplicateKeys = computeDuplicateKeys(rows);
+  return rows.map((row) => {
+    const key = [
+      row.date,
+      row.description.trim().toLowerCase(),
+      row.debit ?? "",
+      row.credit ?? "",
+      row.balance ?? "",
+    ].join("|");
+
+    return {
+      ...row,
+      duplicate: duplicateKeys.has(key),
+    };
+  });
+}
+
+function getAuditLog(
+  metrics: Prisma.JsonValue | null,
+  uploadedAt: Date,
+  uploadedBy: string | null,
+  completedAt: Date | null,
+): AuditLogEntry[] {
+  const edits =
+    metrics && typeof metrics === "object" && !Array.isArray(metrics)
+      ? ((metrics as Record<string, unknown>).edits as
+          | Array<Record<string, unknown>>
+          | undefined)
+      : undefined;
+
+  const auditLog: AuditLogEntry[] = [
+    {
+      action: "uploaded",
+      at: uploadedAt.toISOString(),
+      by: uploadedBy,
+    },
+  ];
+
+  if (completedAt) {
+    auditLog.push({
+      action: "processed",
+      at: completedAt.toISOString(),
+      by: null,
+    });
+  }
+
+  for (const edit of edits ?? []) {
+    if (typeof edit.at !== "string") {
+      continue;
+    }
+    auditLog.push({
+      action: "edited",
+      at: edit.at,
+      by: typeof edit.by === "string" ? edit.by : null,
+      note:
+        typeof edit.note === "string"
+          ? edit.note
+          : typeof edit.count === "number"
+            ? `${edit.count} rows updated`
+            : undefined,
+    });
+  }
+
+  return auditLog;
+}
+
+function classifyProcessingFailure(error: unknown): string {
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : "unknown_error";
+
+  if (message.includes("unsupported") || message.includes("mime")) {
+    return "unsupported_file";
+  }
+  if (message.includes("size") || message.includes("large")) {
+    return "file_too_large";
+  }
+  if (message.includes("textract") || message.includes("aws")) {
+    return "ocr_provider_error";
+  }
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return "ocr_timeout";
+  }
+  if (message.includes("parse") || message.includes("format")) {
+    return "parse_error";
+  }
+  return "processing_error";
 }
 
 export async function createDocumentJob(params: {
@@ -168,12 +281,16 @@ export async function processDocumentJob(params: {
     });
   } catch (error) {
     logger.error({ error, jobId: params.jobId }, "Processing job failed");
+    const failureReason = classifyProcessingFailure(error);
     await prisma.processingJob.update({
       where: { id: params.jobId },
       data: {
         status: "failed",
         errorMessage:
           error instanceof Error ? error.message : "Unknown processing error",
+        metrics: {
+          failureReason,
+        } as unknown as Prisma.InputJsonValue,
         completedAt: new Date(),
       },
     });
@@ -186,8 +303,12 @@ export async function getJobDetails(jobId: string): Promise<JobView | null> {
     include: {
       document: {
         select: {
+          id: true,
           originalName: true,
           documentType: true,
+          uploadedBy: true,
+          storagePath: true,
+          mimeType: true,
           createdAt: true,
         },
       },
@@ -203,22 +324,34 @@ export async function getJobDetails(jobId: string): Promise<JobView | null> {
     return null;
   }
 
-  const structured = job.transactions.map((tx) => {
+  const structuredBase = job.transactions.map((tx) => {
+    const confidence = toOptionalNumber(tx.confidence);
     const item = {
+      rowIndex: tx.rowIndex,
       date: tx.txDate ?? "",
       description: tx.description ?? "",
+      chequeRef: extractChequeReference(tx.description ?? ""),
       debit: toNullableNumber(tx.debit),
       credit: toNullableNumber(tx.credit),
       balance: toNullableNumber(tx.balance),
     };
 
-    const confidence = toOptionalNumber(tx.confidence);
     if (typeof confidence === "number") {
-      return { ...item, confidence };
+      return {
+        ...item,
+        confidence,
+        lowConfidence: confidence < 80,
+      };
     }
 
     return item;
   });
+
+  const structured = withDuplicateFlags(structuredBase);
+  const duplicateCount = structured.filter((row) => row.duplicate).length;
+  const lowConfidenceCount = structured.filter(
+    (row) => row.lowConfidence,
+  ).length;
 
   const base: JobView = {
     id: job.id,
@@ -244,13 +377,208 @@ export async function getJobDetails(jobId: string): Promise<JobView | null> {
         signaturesDetected: 0,
         tablesDetected: 0,
       }) as unknown as DocumentSummary,
+      review: {
+        duplicateCount,
+        lowConfidenceCount,
+      },
+      auditLog: getAuditLog(
+        job.metrics,
+        job.document.createdAt,
+        job.document.uploadedBy,
+        job.completedAt,
+      ),
     };
   }
 
   return base;
 }
 
-export async function getHistoryList(limit = 100) {
+export async function updateReviewedTransactions(params: {
+  jobId: string;
+  userId: string | undefined;
+  rows: Array<{
+    rowIndex: number;
+    date?: string;
+    description?: string;
+    debit?: number | null;
+    credit?: number | null;
+    balance?: number | null;
+  }>;
+}) {
+  const job = await prisma.processingJob.findUnique({
+    where: { id: params.jobId },
+    include: {
+      document: {
+        select: {
+          documentType: true,
+          originalName: true,
+        },
+      },
+      transactions: {
+        orderBy: {
+          rowIndex: "asc",
+        },
+      },
+    },
+  });
+
+  if (!job) {
+    throw new AppError("Job not found", 404, "JOB_NOT_FOUND");
+  }
+
+  if (job.status !== "completed") {
+    throw new AppError(
+      "Only completed jobs can be edited",
+      400,
+      "JOB_NOT_EDITABLE",
+    );
+  }
+
+  const availableRowIndexes = new Set(
+    job.transactions.map((row) => row.rowIndex),
+  );
+  for (const row of params.rows) {
+    if (!availableRowIndexes.has(row.rowIndex)) {
+      throw new AppError(
+        `Row ${row.rowIndex} not found for this job`,
+        400,
+        "INVALID_ROW_INDEX",
+      );
+    }
+  }
+
+  await prisma.$transaction(
+    params.rows.map((row) =>
+      prisma.extractedTransaction.updateMany({
+        where: {
+          jobId: params.jobId,
+          rowIndex: row.rowIndex,
+        },
+        data: {
+          txDate: row.date ?? undefined,
+          description: row.description ?? undefined,
+          debit:
+            typeof row.debit === "number"
+              ? new Prisma.Decimal(row.debit)
+              : row.debit === null
+                ? null
+                : undefined,
+          credit:
+            typeof row.credit === "number"
+              ? new Prisma.Decimal(row.credit)
+              : row.credit === null
+                ? null
+                : undefined,
+          balance:
+            typeof row.balance === "number"
+              ? new Prisma.Decimal(row.balance)
+              : row.balance === null
+                ? null
+                : undefined,
+        },
+      }),
+    ),
+  );
+
+  const refreshed = await prisma.extractedTransaction.findMany({
+    where: { jobId: params.jobId },
+    orderBy: { rowIndex: "asc" },
+  });
+
+  const transactionRows: TransactionRow[] = refreshed.map((tx) => ({
+    rowIndex: tx.rowIndex,
+    date: tx.txDate ?? "",
+    description: tx.description ?? "",
+    chequeRef: extractChequeReference(tx.description ?? ""),
+    debit: toNullableNumber(tx.debit),
+    credit: toNullableNumber(tx.credit),
+    balance: toNullableNumber(tx.balance),
+    confidence: toOptionalNumber(tx.confidence),
+    lowConfidence:
+      typeof toOptionalNumber(tx.confidence) === "number"
+        ? (toOptionalNumber(tx.confidence) ?? 0) < 80
+        : undefined,
+  }));
+
+  const metricsObj =
+    job.metrics &&
+    typeof job.metrics === "object" &&
+    !Array.isArray(job.metrics)
+      ? ({ ...(job.metrics as Record<string, unknown>) } as Record<
+          string,
+          unknown
+        >)
+      : {};
+  const edits = Array.isArray(metricsObj.edits)
+    ? (metricsObj.edits as Array<Record<string, unknown>>)
+    : [];
+
+  edits.push({
+    at: new Date().toISOString(),
+    by: params.userId ?? null,
+    count: params.rows.length,
+  });
+  metricsObj.edits = edits;
+
+  const summary = buildSummary({
+    rawText: job.rawText ?? "",
+    documentType: job.document.documentType,
+    transactionRows,
+    confidenceScore:
+      typeof metricsObj.confidenceScore === "number"
+        ? metricsObj.confidenceScore
+        : transactionRows.length > 0
+          ? Number(
+              (
+                transactionRows.reduce(
+                  (sum, row) => sum + (row.confidence ?? 0),
+                  0,
+                ) / transactionRows.length
+              ).toFixed(2),
+            )
+          : 0,
+    signaturesDetected:
+      typeof metricsObj.signaturesDetected === "number"
+        ? metricsObj.signaturesDetected
+        : 0,
+    tablesDetected:
+      typeof metricsObj.tableCount === "number" ? metricsObj.tableCount : 0,
+  });
+
+  await prisma.processingJob.update({
+    where: { id: params.jobId },
+    data: {
+      summary: summary as unknown as Prisma.InputJsonValue,
+      metrics: metricsObj as unknown as Prisma.InputJsonValue,
+      updatedAt: new Date(),
+    },
+  });
+
+  return getJobDetails(params.jobId);
+}
+
+export async function getJobDocumentInfo(jobId: string) {
+  const job = await prisma.processingJob.findUnique({
+    where: { id: jobId },
+    include: {
+      document: {
+        select: {
+          storagePath: true,
+          mimeType: true,
+          originalName: true,
+        },
+      },
+    },
+  });
+
+  if (!job) {
+    return null;
+  }
+
+  return job.document;
+}
+
+export async function getHistoryList(limit = 100): Promise<HistoryJobView[]> {
   const jobs = await prisma.processingJob.findMany({
     take: Math.max(1, Math.min(limit, 500)),
     orderBy: {
@@ -272,13 +600,48 @@ export async function getHistoryList(limit = 100) {
     },
   });
 
-  return jobs.map((job) => ({
-    id: job.id,
-    originalName: job.document.originalName,
-    status: job.status,
-    documentType: job.document.documentType,
-    uploadedAt: job.document.createdAt.toISOString(),
-    completedAt: job.completedAt?.toISOString() ?? null,
-    transactionCount: job._count.transactions,
-  }));
+  return jobs.map((job) => {
+    const summaryObj =
+      job.summary &&
+      typeof job.summary === "object" &&
+      !Array.isArray(job.summary)
+        ? (job.summary as Record<string, unknown>)
+        : {};
+    const metricsObj =
+      job.metrics &&
+      typeof job.metrics === "object" &&
+      !Array.isArray(job.metrics)
+        ? (job.metrics as Record<string, unknown>)
+        : {};
+
+    return {
+      id: job.id,
+      originalName: job.document.originalName,
+      status: job.status,
+      documentType: job.document.documentType,
+      uploadedAt: job.document.createdAt.toISOString(),
+      completedAt: job.completedAt?.toISOString() ?? null,
+      transactionCount: job._count.transactions,
+      confidenceScore:
+        typeof summaryObj.confidenceScore === "number"
+          ? summaryObj.confidenceScore
+          : undefined,
+      balanceCheckPassed:
+        typeof summaryObj.balanceCheckPassed === "boolean"
+          ? summaryObj.balanceCheckPassed
+          : undefined,
+      duplicateCount:
+        typeof summaryObj.duplicateCount === "number"
+          ? summaryObj.duplicateCount
+          : undefined,
+      lowConfidenceCount:
+        typeof summaryObj.lowConfidenceCount === "number"
+          ? summaryObj.lowConfidenceCount
+          : undefined,
+      failureReason:
+        typeof metricsObj.failureReason === "string"
+          ? metricsObj.failureReason
+          : null,
+    };
+  });
 }

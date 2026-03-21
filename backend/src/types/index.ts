@@ -1,12 +1,16 @@
 export type JobStatus = "pending" | "processing" | "completed" | "failed";
 
 export interface TransactionRow {
+  rowIndex?: number;
   date: string;
   description: string;
+  chequeRef?: string | null;
   debit: number | null;
   credit: number | null;
   balance: number | null;
   confidence?: number;
+  lowConfidence?: boolean;
+  duplicate?: boolean;
 }
 
 export interface DocumentSummary {
@@ -20,6 +24,39 @@ export interface DocumentSummary {
   confidenceScore: number;
   signaturesDetected: number;
   tablesDetected: number;
+  openingBalance?: number | null;
+  closingBalance?: number | null;
+  calculatedClosingBalance?: number | null;
+  balanceDifference?: number | null;
+  balanceCheckPassed?: boolean;
+  parserProfile?: string;
+  duplicateCount?: number;
+  lowConfidenceCount?: number;
+  balanceContinuityIssues?: number;
+  invalidDateCount?: number;
+  scanQuality?: "good" | "fair" | "poor";
+}
+
+export interface HistoryJobView {
+  id: string;
+  originalName: string;
+  status: string;
+  documentType: string;
+  uploadedAt: string;
+  completedAt?: string | null;
+  transactionCount: number;
+  confidenceScore?: number;
+  balanceCheckPassed?: boolean;
+  duplicateCount?: number;
+  lowConfidenceCount?: number;
+  failureReason?: string | null;
+}
+
+export interface AuditLogEntry {
+  action: "uploaded" | "processed" | "edited";
+  at: string;
+  by: string | null;
+  note?: string;
 }
 
 export interface JobView {
@@ -34,6 +71,11 @@ export interface JobView {
     rawText: string;
     structured: TransactionRow[];
     summary: DocumentSummary;
+    review: {
+      duplicateCount: number;
+      lowConfidenceCount: number;
+    };
+    auditLog: AuditLogEntry[];
   };
 }
 
